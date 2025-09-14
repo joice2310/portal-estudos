@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal Ultra-Profissional de Estudos</title>
+<link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+<style>
+body{margin:0;padding:0;font-family:Arial,sans-serif;background:#f0f2f5;}
+header{background:#34495e;color:white;padding:16px;text-align:center;}
+main{display:flex;min-height:calc(100vh - 64px);}
+.sidebar{width:220px;background:#2c3e50;color:white;padding:16px;box-sizing:border-box;overflow-y:auto;}
+.sidebar h3{margin-top:0;text-align:center;}
+.sidebar ul{list-style:none;padding:0;}
+.sidebar ul li{padding:8px;cursor:pointer;border-radius:6px;margin-bottom:4px;}
+.sidebar ul li:hover{background:#3d566e;}
+.content{flex:1;padding:20px;box-sizing:border-box;overflow-y:auto;}
+.hidden{display:none;}
+.area-card{padding:16px;border-radius:8px;margin-bottom:16px;box-shadow:0 3px 6px rgba(0,0,0,0.1);}
+.area-card h3{display:flex;justify-content:space-between;align-items:center;}
+.card{padding:10px;margin:8px 0;border-radius:6px;position:relative;}
+.card button{margin-left:5px;font-size:12px;}
+button{background:#34495e;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;}
+button:hover{opacity:0.9;}
+input, select{width:100%;padding:8px;margin:6px 0 12px;border-radius:6px;border:1px solid #ccc;}
+label{font-weight:600;}
+#adminPanel{background:#d6eaf8;padding:16px;border-radius:8px;margin-bottom:20px;}
+#editor{height:200px;background:white;}
+#searchBox{margin-bottom:12px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📚 Portal Ultra-Profissional de Estudos</h1>
+</header>
+
+<main>
+  <div class="sidebar hidden" id="sidebarDiv">
+    <h3>Áreas de Estudo</h3>
+    <ul id="areaList"></ul>
+  </div>
+
+  <div class="content">
+    <div id="loginDiv">
+      <h2>Login</h2>
+      <input type="email" id="email" placeholder="Email">
+      <input type="password" id="password" placeholder="Senha">
+      <button onclick="loginUser()">Entrar</button>
+      <button onclick="registerUser()">Registrar</button>
+    </div>
+
+    <div id="studyDiv" class="hidden">
+      <h2>Bem-vindo, <span id="displayName"></span>!</h2>
+      <input type="text" id="searchBox" placeholder="Buscar resumo..." onkeyup="filterSummaries()">
+      <div id="areasContainer"></div>
+      <button onclick="logoutUser()">Sair</button>
+    </div>
+
+    <div id="adminDiv" class="hidden">
+      <div id="adminPanel">
+        <h2>🛠 Painel do Administrador</h2>
+        <label>Nova Área</label>
+        <input type="text" id="newArea" placeholder="Ex: Psicologia Geral">
+        <button onclick="addArea()">Adicionar Área</button>
+        <hr>
+        <label>Resumo</label>
+        <div id="editor"></div>
+        <label>Selecione Área</label>
+        <select id="areaSelect"></select>
+        <button onclick="addOrUpdateSummary()">Adicionar/Atualizar Resumo</button>
+        <input type="hidden" id="editingSummaryId">
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+
+<script>
+// Config Firebase já incluído
+const firebaseConfig = {
+  apiKey: "AIzaSyC38rDA6YWuRCuyfVZxx3GdgMJjMKnSUd4",
+  authDomain: "portal-estudos.firebaseapp.com",
+  projectId: "portal-estudos",
+  storageBucket: "portal-estudos.firebasestorage.app",
+  messagingSenderId: "162031371017",
+  appId: "1:162031371017:web:0e615f81e1da65bd0e09d8",
+  measurementId: "G-ZEY1HSQ1PD"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+const quill = new Quill('#editor', { theme: 'snow' });
+let currentUser = null;
+const adminEmail = "admin@seusite.com";
+const adminPassword = "admin123";
+const areaColors = ["#f39c12","#1abc9c","#e74c3c","#9b59b6","#3498db"];
+
+// Funções de login
+function registerUser(){
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  if(!email || !password){ alert("Preencha todos os campos"); return; }
+  auth.createUserWithEmailAndPassword(email, password)
+    .then(()=> loginUser())
+    .catch(error => alert(error.message));
+}
+
+function loginUser(){
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  if(!email || !password){ alert("Preencha todos os campos"); return; }
+
+  // Login admin fixo
+  if(email === adminEmail && password === adminPassword){
+    currentUser = { email: adminEmail, isAdmin: true };
+    enterSite(true);
+    return;
+  }
+
+  // Login usuário Firebase
+  auth.signInWithEmailAndPassword(email,password)
+    .then(userCredential => {
+      currentUser = { email: userCredential.user.email, isAdmin: false };
+      enterSite(false);
+    })
+    .catch(error => alert(error.message));
+}
+
+function enterSite(isAdmin){
+  document.getElementById("displayName").innerText = currentUser.email;
+  document.getElementById("loginDiv").classList.add("hidden");
+  document.getElementById("studyDiv").classList.remove("hidden");
+  document.getElementById("sidebarDiv").classList.remove("hidden");
+  if(isAdmin) document.getElementById("adminDiv").classList.remove("hidden");
+  loadAreas();
+}
+
+function logoutUser(){
+  if(currentUser.isAdmin){
+    location.reload();
+  } else {
+    auth.signOut().then(()=> location.reload());
+  }
+}
+
+// ------------------ Funções de áreas e resumos ------------------
+async function loadAreas(){
+  const container = document.getElementById("areasContainer");
+  const areaList = document.getElementById("areaList");
+  container.innerHTML=""; areaList.innerHTML="";
+  const areasSnapshot = await db.collection("areas").get();
+  let colorIndex=0;
+  areasSnapshot.forEach(async doc=>{
+    const areaName = doc.id;
+    const color = areaColors[colorIndex%areaColors.length]; colorIndex++;
+
+    // Sidebar
+    const li = document.createElement("li");
+    li.textContent=areaName;
+    li.style.background=color;
+    li.onclick=()=>filterByArea(areaName);
+    areaList.appendChild(li);
+
+    // Content
+    const div = document.createElement("div");
+    div.className="area-card";
+    div.dataset.area=areaName;
+    div.style.borderLeft=`6px solid ${color}`;
+    div.innerHTML=`<h3>${areaName}</h3>`;
+    const summariesContainer = document.createElement("div");
+    summariesContainer.id=`area-${areaName}`;
+    div.appendChild(summariesContainer);
+    container.appendChild(div);
+
+    // Carregar resumos
+    const summariesSnapshot = await db.collection("areas").doc(areaName).collection("summaries").orderBy("order","asc").get();
+    summariesSnapshot.forEach(s=>{
+      const card=document.createElement("div");
+      card.className="card";
+      card.id=`${areaName}-${s.id}`;
+      card.innerHTML=s.data().text;
+      if(currentUser.isAdmin){
+        const editBtn=document.createElement("button");
+        editBtn.textContent="Editar"; editBtn.onclick=()=>editSummary(areaName,s.id,s.data().text);
+        const delBtn=document.createElement("button");
+        delBtn.textContent="Excluir"; delBtn.onclick=()=>deleteSummary(areaName,s.id);
+        card.appendChild(editBtn);
+        card.appendChild(delBtn);
+      }
+      summariesContainer.appendChild(card);
+    });
+
+    // Sortable admin
+    if(currentUser.isAdmin){
+      new Sortable(summariesContainer,{animation:150,onEnd:()=>saveOrder(areaName)});
+    }
+  });
+  updateAreaSelect();
+}
+
+function saveOrder(area){
+  const container=document.getElementById(`area-${area}`);
+  const cards=container.children;
+  Array.from(cards).forEach((card,index)=>{
+    const id = card.id.split("-")[1];
+    db.collection("areas").doc(area).collection("summaries").doc(id).update({order:index});
+  });
+}
+
+function filterByArea(area){
+  const divs=document.querySelectorAll(".area-card");
+  divs.forEach(d=>{ d.style.display=d.dataset.area===area?"block":"none"; });
+}
+
+function filterSummaries(){
+  const search=document.getElementById("searchBox").value.toLowerCase();
+  const cards=document.querySelectorAll(".card");
+  cards.forEach(c=>{ c.style.display=c.textContent.toLowerCase().includes(search)?"block":"none"; });
+}
+
+function updateAreaSelect(){
+  db.collection("areas").get().then(snapshot=>{
+    const select=document.getElementById("areaSelect"); select.innerHTML="";
+    snapshot.forEach(doc=>{
+      const option=document.createElement("option");
+      option.value=doc.id; option.text=doc.id; select.appendChild(option);
+    });
+  });
+}
+
+function addArea(){
+  const area=document.getElementById("newArea").value.trim();
+  if(!area){ alert("Digite o nome da área"); return; }
+  db.collection("areas").doc(area).set({created:firebase.firestore.FieldValue.serverTimestamp()})
+    .then(()=>{ document.getElementById("newArea").value=""; loadAreas(); });
+}
+
+function addOrUpdateSummary(){
+  const area=document.getElementById("areaSelect").value;
+  const text=quill.root.innerHTML.trim();
+  const editingId=document.getElementById("editingSummaryId").value;
+  if(!area||!text){ alert("Preencha resumo e selecione área"); return; }
+  if(editingId){
+    db.collection("areas").doc(area).collection("summaries").doc(editingId).update({text})
+      .then(()=>{ quill.setContents([{insert:'\n'}]); document.getElementById("editingSummaryId").value=""; loadAreas(); });
+  } else {
+    db.collection("areas").doc(area).collection("summaries").add({text,order:999,created:firebase.firestore.FieldValue.serverTimestamp()})
+      .then(()=>{ quill.setContents([{insert:'\n'}]); loadAreas(); });
+  }
+}
+
+function editSummary(area,id,text){
+  document.getElementById("editingSummaryId").value=id;
+  document.getElementById("areaSelect").value=area;
+  quill.root.innerHTML=text;
+}
+
+function deleteSummary(area,id){
+  if(confirm("Deseja realmente excluir este resumo?"))
+    db.collection("areas").doc(area).collection("summaries").doc(id).delete().then(()=>loadAreas());
+}
+</script>
+
+</body>
+</html>
